@@ -92,7 +92,7 @@ function parseFlowChain(
       break
     }
 
-    const node = nodes[currentId]
+    const node: DrawflowNode | undefined = nodes[currentId]
     if (!node) {
       break
     }
