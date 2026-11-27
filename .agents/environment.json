@@ -1,0 +1,3 @@
+{
+  "install": "RSC_VERSION=$(node -p \"require('./.rsc.json').catalogVersion\") && npx --yes \"@ericrisco/rsc@${RSC_VERSION}\" sync"
+}
