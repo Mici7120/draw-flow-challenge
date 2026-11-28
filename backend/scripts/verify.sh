@@ -9,19 +9,20 @@
 # Environment:
 #   MIN_COVERAGE (default: 80.0) — minimum statement coverage percentage per core package.
 #
-# Enforces: gofmt, go vet, go build, go test -race, and >= MIN_COVERAGE% on core packages.
+# Enforces: gofmt, go vet, go build, go test -race -cover (single pass), and >= MIN_COVERAGE% on all 6 core packages.
 # Optional tools (staticcheck, golangci-lint, govulncheck) run when installed and emit [skip] otherwise.
 
 set -euo pipefail
 
 MIN_COVERAGE="${MIN_COVERAGE:-80.0}"
+MODULE_PATH="github.com/Mici7120/draw-flow-challenge/backend"
 CORE_PACKAGES=(
-  "./internal/program"
-  "./internal/codegen"
-  "./internal/sandbox"
-  "./internal/store"
-  "./internal/service"
-  "./internal/httpapi"
+  "internal/program"
+  "internal/codegen"
+  "internal/sandbox"
+  "internal/store"
+  "internal/service"
+  "internal/httpapi"
 )
 
 if [ -t 1 ]; then
@@ -79,16 +80,13 @@ else
   warn "golangci-lint not installed"
 fi
 
-info "go test -race + coverage gate (>= ${MIN_COVERAGE}%)"
-cover_file="$(mktemp)"
-trap 'rm -f "$cover_file"' EXIT
-
-test_flags=(-race -covermode=atomic "-coverprofile=$cover_file")
+info "go test -race -cover + coverage gate (>= ${MIN_COVERAGE}%)"
+test_flags=(-race -cover)
 cgo_enabled="$(go env CGO_ENABLED 2>/dev/null || echo 0)"
 cgo_cc="$(go env CC 2>/dev/null || echo cc)"
 if [ "$cgo_enabled" != "1" ] || ! have "$cgo_cc"; then
   warn "cgo or C compiler unavailable; running without -race"
-  test_flags=(-covermode=atomic "-coverprofile=$cover_file")
+  test_flags=(-cover)
 fi
 
 test_out="$(go test "${test_flags[@]}" ./... 2>&1)" && test_status=0 || test_status=$?
@@ -97,29 +95,23 @@ if [ "$test_status" -ne 0 ]; then
   fail "go test failed"
 else
   ok "go test passed"
-  # Verify coverage threshold per core package that exists on disk.
-  checked_pkgs=0
   for pkg in "${CORE_PACKAGES[@]}"; do
-    pkg_dir="${pkg#./}"
-    if [ ! -d "$pkg_dir" ]; then
+    if [ ! -d "$pkg" ]; then
+      fail "required core package directory missing: ./$pkg"
       continue
     fi
-    checked_pkgs=$((checked_pkgs + 1))
-    pkg_out="$(go test -cover "$pkg" 2>&1)" || { fail "coverage run failed for $pkg"; continue; }
-    pct="$(printf '%s\n' "$pkg_out" | awk '/coverage:/ { for (i=1; i<=NF; i++) if ($i == "coverage:") { gsub(/%/, "", $(i+1)); print $(i+1); exit } }')"
+    full_pkg="${MODULE_PATH}/${pkg}"
+    pct="$(printf '%s\n' "$test_out" | awk -v target="$full_pkg" '$2 == target { for (i=1; i<=NF; i++) if ($i == "coverage:") { gsub(/%/, "", $(i+1)); print $(i+1); exit } }')"
     if [ -z "$pct" ]; then
-      fail "could not parse coverage percentage for $pkg"
+      fail "could not parse coverage percentage for ./$pkg"
       continue
     fi
     if awk -v p="$pct" -v min="$MIN_COVERAGE" 'BEGIN { exit !(p + 0 >= min + 0) }'; then
-      ok "$pkg coverage ${pct}% >= ${MIN_COVERAGE}%"
+      ok "./$pkg coverage ${pct}% >= ${MIN_COVERAGE}%"
     else
-      fail "$pkg coverage ${pct}% < ${MIN_COVERAGE}% floor"
+      fail "./$pkg coverage ${pct}% < ${MIN_COVERAGE}% floor"
     fi
   done
-  if [ "$checked_pkgs" -eq 0 ]; then
-    warn "no core packages exist yet; coverage floor will enforce once packages are added"
-  fi
 fi
 
 info "govulncheck"
