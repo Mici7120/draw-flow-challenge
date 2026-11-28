@@ -35,3 +35,9 @@
 | Report | Path | Summary |
 |--------|------|---------|
 | Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/analysis/program-model-and-execution.md` | Pre-implementation consistency gate report (`GATE: PASS`) |
+
+### Progress (`sdd/progress/`)
+
+| Ledger | Path | Summary |
+|--------|------|---------|
+| Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/progress/program-model-and-execution.md` | Append-only per-task TDD/review ledger and decision queue for Sub-spec 1 |
