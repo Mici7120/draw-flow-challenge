@@ -5,7 +5,9 @@
     "claude"
   ],
   "skills": [
+    "accessibility",
     "analyze",
+    "api-design",
     "asdd",
     "automation-strategy",
     "clarify",
@@ -15,8 +17,10 @@
     "decision-challenge",
     "deprecation",
     "design",
+    "docker",
     "fable-operator",
     "ftd",
+    "go",
     "harness",
     "idea-refinement",
     "implement",
@@ -33,7 +37,10 @@
     "specify",
     "suggest",
     "tasks",
+    "testing-go",
+    "testing-web",
     "tidy",
+    "typescript",
     "unslop",
     "ux",
     "verify",
@@ -984,6 +991,11 @@
       "02-DOCS/wiki/harness/decisions.md": "c157768321bfe97fcd4f686422cfa99579f9e0d876d9f6fa9b47a7a5f25fdcd3",
       "02-DOCS/wiki/harness/installation-plan.md": "9919e36ce4067ce8c3b686c21095d5e4eda2a150a36dca69ed823300f6990ed8",
       "02-DOCS/wiki/harness/user-profile.md": "8c1a2023f1a5e74cdc326bf0df103817719df82d48b775669fcf1ec3304f1e1d"
+    },
+    "maintenanceDrift": {
+      "action": "add go,testing-go,typescript,testing-web,api-design,accessibility,docker",
+      "recordedAt": "2026-11-28T04:10:32.775Z",
+      "requiresReassessment": true
     }
   }
 }

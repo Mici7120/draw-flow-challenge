@@ -78,3 +78,17 @@
 .claude/commands/learn.md
 .claude/commands/resume-session.md
 .claude/commands/save-session.md
+.antigravity/rsc/accessibility
+.antigravity/rsc/api-design
+.antigravity/rsc/docker
+.antigravity/rsc/go
+.antigravity/rsc/testing-go
+.antigravity/rsc/testing-web
+.antigravity/rsc/typescript
+.claude/skills/accessibility
+.claude/skills/api-design
+.claude/skills/docker
+.claude/skills/go
+.claude/skills/testing-go
+.claude/skills/testing-web
+.claude/skills/typescript

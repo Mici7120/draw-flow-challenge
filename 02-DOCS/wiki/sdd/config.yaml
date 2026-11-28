@@ -1,0 +1,58 @@
+version: 1
+project:
+  root: .
+  # No package.json or go.mod detected yet; ratified stack lives in 02-DOCS/wiki/sdd/constitution.md.
+  # Re-run sdd-init once frontend/ and backend/ manifests and test runners exist.
+  stacks: []
+  package_managers: []
+  monorepo: false
+  signals:
+    - no-manifests-yet
+    - constitution-ratified:v1.0.0
+sdd:
+  artifact_store: 02-DOCS/wiki/sdd
+  execution_mode: interactive
+  registry_path: .rsc/skill-registry.json
+  review_budget:
+    line_budget: 400
+    file_budget: 12
+  delivery_strategy:
+    default: ask-on-risk
+testing:
+  # No test runner detected yet; gap recorded until frontend/ and backend/ are scaffolded.
+  strict_tdd: false
+  runners: []
+  commands:
+    apply: []
+    verify: []
+phase_rules:
+  proposal: optional-on-ambiguity
+  specify: requires intent or proposal
+  plan: requires spec
+  tasks: requires plan and spec
+  analyze: requires spec plan tasks
+  implement: requires analyze pass, strict_tdd when testing.strict_tdd is true
+  verify: requires spec tasks evidence
+  archive: requires verify record and review/ship outcome
+models:
+  enabled: false              # opt-in master switch; false = honor session model, announce nothing
+  provider: anthropic         # which provider the tiers below resolve to
+  tiers:
+    heavy: claude-opus-5-5
+    balanced: claude-sonnet-5-5
+    light: claude-haiku-5-5
+  phases:
+    constitution: heavy
+    specify: balanced
+    clarify: balanced
+    plan: heavy
+    tasks: balanced
+    analyze: heavy
+    implement: balanced
+    verify: balanced
+    review: heavy
+    ship: light
+    debug: heavy
+    worktrees: light
+    sdd-init: light
+  overrides: {}               # per-phase tier overrides set by the user
