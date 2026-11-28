@@ -40,3 +40,16 @@
 - **decision:** Option 1 — Repo-scoped `.agents/environment.json` running `npx --yes @ericrisco/rsc@<catalogVersion> sync`.
 - **why:** Versioned in git so every collaborator and fresh cloud VM gets the exact pinned harness version automatically without drifting to `@latest`.
 - **supersedes:** none
+
+---
+
+## D-0004 — Three-sub-spec decomposition and Sub-spec 1 contract shape
+- **date:** 2026-11-28
+- **context:** `README.md` describes three connected subsystems (visual node editor, live code/run view, and backend persistence + Python evaluation) plus optional stretch goals (`string`, HTTP requests, extra languages).
+- **options considered:**
+  1. Decompose into 3 sequential sub-specs starting with Sub-spec 1 (`program-model-and-execution`), using a validated visual program contract with permissive draft saving and strict validation on run; defer optional extras and delete out of v1.
+  2. Single unified MVP spec covering all three parts in one pass.
+  3. Opaque visual program save with direct raw-Python execution.
+- **decision:** Option 1 — 3 sequential sub-specs, starting with `02-DOCS/wiki/sdd/specs/program-model-and-execution.md` (Approach 1: validated visual program contract, permissive draft save, strict validated run, explicit Output/Print + final variables, inclusive `for`, 6 numeric comparisons, create+update save, single shared workspace).
+- **why:** Prevents oversized specs with hidden contradictions, keeps one source of truth between visual blocks and executed Python, avoids exposing learners to raw syntax tracebacks, and narrows the sandbox attack surface.
+- **supersedes:** none

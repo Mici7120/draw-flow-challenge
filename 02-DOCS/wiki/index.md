@@ -17,3 +17,9 @@
 | Project constitution (SDD non-negotiables) | `02-DOCS/wiki/sdd/constitution.md` | Numbered, testable project principles and Definition of Done |
 | SDD runtime config | `02-DOCS/wiki/sdd/config.yaml` | Calibrated SDD settings, testing commands, review budget, and skill registry path |
 | SDD decisions log | `02-DOCS/wiki/sdd/decisions.md` | Append-only record of stack, security, and workflow decisions |
+
+### Specs (`sdd/specs/`)
+
+| Spec | Path | Summary |
+|------|------|---------|
+| Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/specs/program-model-and-execution.md` | Sub-spec 1 of 3 — visual program contract, Python translation, persistence, and sandboxed execution |
