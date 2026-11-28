@@ -23,3 +23,15 @@
 | Spec | Path | Summary |
 |------|------|---------|
 | Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/specs/program-model-and-execution.md` | Sub-spec 1 of 3 — visual program contract, Python translation, persistence, and sandboxed execution |
+
+### Plans (`sdd/plans/`)
+
+| Plan | Path | Summary |
+|------|------|---------|
+| Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/plans/program-model-and-execution.md` | Technical architecture, contracts, testing strategy, and task breakdown for Sub-spec 1 |
+
+### Analysis (`sdd/analysis/`)
+
+| Report | Path | Summary |
+|--------|------|---------|
+| Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/analysis/program-model-and-execution.md` | Pre-implementation consistency gate report (`GATE: PASS`) |

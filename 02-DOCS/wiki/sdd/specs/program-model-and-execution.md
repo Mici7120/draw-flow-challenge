@@ -6,13 +6,13 @@ tags: [sdd, spec, ast, python, sandbox]
 timestamp: 2026-11-28T04:19:55Z
 topic: sdd
 slug: program-model-and-execution
-branch: docs/spec-program-model-execution
-status: clarified
+branch: feat/program-model-and-execution
+status: planned
 ---
 
 # Spec — Program Model, Persistence & Sandboxed Execution
 
-> Slug: `program-model-and-execution` · Status: clarified · Created: 2026-11-28
+> Slug: `program-model-and-execution` · Status: planned · Created: 2026-11-28
 > Inherits: [constitution](../constitution.md) · Sub-spec 1 of 3 (followed by Visual Node Editor and Live Code View & Run UI)
 
 ## Problem & why
@@ -69,8 +69,8 @@ No user is allowed to:
   - **Printed output:** `5` (with `output_truncated: false`; if output exceeds 64 KB or 1,000 lines, it is truncated cleanly with `output_truncated: true` and a truncation notice)
   - **Final variables:** `x = 5`
   - **Status:** succeeded
-- **Run (invalid or incomplete program):** Receives a structured validation failure naming the offending block identifier(s) and a plain-language reason; execution does not start.
-- **Run (runtime, timeout, or sandbox failure):** Receives the generated Python, any printed output emitted before failure, and a clean structured error (never host paths, raw server stack traces, or internal persistence errors).
+- **Run (invalid, incomplete, or policy-blocked program):** Receives a structured validation or sandbox-policy failure (naming offending block identifier(s) for graph errors) and a plain-language reason; execution does not start.
+- **Run (runtime, timeout, or resource-limit failure):** Receives the generated Python, any printed output emitted before failure, and a clean structured error (never host paths, raw server stack traces, or internal persistence errors).
 
 ## What it must respect
 Inherited from [constitution.md](../constitution.md) (v1.0.0), [decisions.md](../decisions.md), and [REVIEW.md](../../../../REVIEW.md):

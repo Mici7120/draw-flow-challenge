@@ -53,3 +53,15 @@
 - **decision:** Option 1 — 3 sequential sub-specs, starting with `02-DOCS/wiki/sdd/specs/program-model-and-execution.md` (Approach 1: validated visual program contract, permissive draft save, strict validated run, explicit Output/Print + final variables, inclusive `for`, 6 numeric comparisons, create+update save, single shared workspace).
 - **why:** Prevents oversized specs with hidden contradictions, keeps one source of truth between visual blocks and executed Python, avoids exposing learners to raw syntax tracebacks, and narrows the sandbox attack surface.
 - **supersedes:** none
+
+---
+
+## D-0005 — Sub-spec 1 backend architecture, REST run error semantics, and sandbox variable capture
+- **date:** 2026-11-28
+- **context:** Planning `02-DOCS/wiki/sdd/plans/program-model-and-execution.md` required settling how the Go backend separates graph validation, Python codegen, sandbox execution, and Dgraph persistence, how runtime execution errors return partial stdout + generated Python, and how final variable values are extracted safely from the Python subprocess.
+- **options considered:**
+  1. Modular Go packages (`internal/program`, `internal/codegen`, `internal/sandbox`, `internal/store`, `internal/service`, `internal/httpapi`, `cmd/server`); normalized `Graph` AST decoupled from DrawFlow UI format; `200 OK` structured `RunResult` for post-start execution outcomes (`succeeded`, `runtime_error`, `timeout`, `resource_limit` — carrying `python_code`, partial `output`, `output_truncated`, and `error: { code, message }`) vs `400`/`404`/`422` `{ error }` envelope for malformed, missing, validation-failed, or pre-execution `sandbox_policy_violation` requests; dedicated fd-3 pipe for final variable JSON capture alongside static Python AST allowlist + isolated `python3 -I -S` subprocess.
+  2. Returning `400`/`500` on runtime errors without `python_code` or partial stdout, and parsing final variables from a sentinel printed to stdout.
+- **decision:** Option 1 — clean layered packages, normalized `Graph` contract, `200 OK` `RunResult` for post-start execution outcomes (`runtime_error`, `timeout`, `resource_limit`) and `422` `{ error }` for pre-execution validation or `sandbox_policy_violation`, plus a dedicated fd-3 pipe for final variables.
+- **why:** Satisfies `spec §What result they get` (always returning generated Python and partial output on runtime/timeout failures), prevents user `print()` output from spoofing variable capture, decouples backend AST validation from frontend DrawFlow layout details, and allows parallel implementation and ≥ 80% unit coverage per package.
+- **supersedes:** none
