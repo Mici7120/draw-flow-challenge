@@ -576,3 +576,124 @@ func TestValidateForRun_EdgeCasesAndErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateForRun_ReviewRegressions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("diamond expression DAG fails fast instead of exponential hang", func(t *testing.T) {
+		t.Parallel()
+		nodes := []program.Node{
+			{ID: "s", Kind: program.KindStart},
+			{ID: "asg", Kind: program.KindAssign, Data: program.NodeData{Name: "x"}},
+			{ID: "leaf", Kind: program.KindNumber, Data: program.NodeData{Value: f64(1)}},
+		}
+		edges := []program.Edge{
+			{ID: "es", Source: "s", SourcePort: "next", Target: "asg", TargetPort: "in"},
+		}
+		for i := 0; i < 30; i++ {
+			nodes = append(nodes, program.Node{
+				ID:   fmt.Sprintf("m%d", i),
+				Kind: program.KindMath,
+				Data: program.NodeData{Operator: "+"},
+			})
+		}
+		edges = append(edges, program.Edge{ID: "ea", Source: "m0", SourcePort: "value", Target: "asg", TargetPort: "value"})
+		for i := 0; i < 29; i++ {
+			src := fmt.Sprintf("m%d", i+1)
+			dst := fmt.Sprintf("m%d", i)
+			edges = append(edges,
+				program.Edge{ID: fmt.Sprintf("el%d", i), Source: src, SourcePort: "value", Target: dst, TargetPort: "left"},
+				program.Edge{ID: fmt.Sprintf("er%d", i), Source: src, SourcePort: "value", Target: dst, TargetPort: "right"},
+			)
+		}
+		edges = append(edges,
+			program.Edge{ID: "elf1", Source: "leaf", SourcePort: "value", Target: "m29", TargetPort: "left"},
+			program.Edge{ID: "elf2", Source: "leaf", SourcePort: "value", Target: "m29", TargetPort: "right"},
+		)
+
+		_, verr := program.ValidateForRun(program.Graph{Nodes: nodes, Edges: edges})
+		if verr == nil || !hasIssueCode(verr, "expression_too_complex") {
+			t.Fatalf("expected expression_too_complex error, got %v", verr)
+		}
+	})
+
+	t.Run("dangling edge on empty node graph rejected", func(t *testing.T) {
+		t.Parallel()
+		g := program.Graph{
+			Edges: []program.Edge{{ID: "e1", Source: "ghost1", SourcePort: "next", Target: "ghost2", TargetPort: "in"}},
+		}
+		_, verr := program.ValidateForRun(g)
+		if verr == nil || !hasIssueCode(verr, "invalid_edge") {
+			t.Fatalf("expected invalid_edge on empty graph with dangling edge, got %v", verr)
+		}
+	})
+
+	t.Run("miswired unused edge between visited nodes rejected", func(t *testing.T) {
+		t.Parallel()
+		g := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "asg", Kind: program.KindAssign, Data: program.NodeData{Name: "x", Value: f64(2)}},
+				{ID: "n5", Kind: program.KindNumber, Data: program.NodeData{Value: f64(5)}},
+				{ID: "out", Kind: program.KindOutput},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "asg", TargetPort: "in"},
+				{ID: "e2", Source: "asg", SourcePort: "next", Target: "out", TargetPort: "in"},
+				{ID: "e3", Source: "n5", SourcePort: "value", Target: "out", TargetPort: "value"},
+				{ID: "e_bad", Source: "n5", SourcePort: "value", Target: "asg", TargetPort: "val"},
+			},
+		}
+		_, verr := program.ValidateForRun(g)
+		if verr == nil || !hasIssueCode(verr, "invalid_connection") {
+			t.Fatalf("expected invalid_connection for unused/misspelled port edge, got %v", verr)
+		}
+	})
+
+	t.Run("all math ops, comparison ops, populated else, and code_block.next succeed", func(t *testing.T) {
+		t.Parallel()
+		for _, op := range []string{"+", "-", "*", "/"} {
+			g := program.Graph{
+				Nodes: []program.Node{
+					{ID: "s", Kind: program.KindStart},
+					{ID: "m", Kind: program.KindMath, Data: program.NodeData{Operator: op, Left: f64(6), Right: f64(2)}},
+					{ID: "a", Kind: program.KindAssign, Data: program.NodeData{Name: "r"}},
+				},
+				Edges: []program.Edge{
+					{ID: "e1", Source: "s", SourcePort: "next", Target: "a", TargetPort: "in"},
+					{ID: "e2", Source: "m", SourcePort: "value", Target: "a", TargetPort: "value"},
+				},
+			}
+			if _, verr := program.ValidateForRun(g); verr != nil {
+				t.Errorf("math op %q failed: %v", op, verr)
+			}
+		}
+
+		for _, cmp := range []string{"==", "!=", "<", "<=", ">", ">="} {
+			g := program.Graph{
+				Nodes: []program.Node{
+					{ID: "s", Kind: program.KindStart},
+					{ID: "blk", Kind: program.KindCodeBlock},
+					{ID: "cond", Kind: program.KindIfElse, Data: program.NodeData{Operator: cmp, Left: f64(1), Right: f64(2)}},
+					{ID: "t1", Kind: program.KindOutput, Data: program.NodeData{Value: f64(1)}},
+					{ID: "f1", Kind: program.KindOutput, Data: program.NodeData{Value: f64(0)}},
+					{ID: "after", Kind: program.KindOutput, Data: program.NodeData{Value: f64(9)}},
+				},
+				Edges: []program.Edge{
+					{ID: "e1", Source: "s", SourcePort: "next", Target: "blk", TargetPort: "in"},
+					{ID: "e2", Source: "blk", SourcePort: "body", Target: "cond", TargetPort: "in"},
+					{ID: "e3", Source: "cond", SourcePort: "then", Target: "t1", TargetPort: "in"},
+					{ID: "e4", Source: "cond", SourcePort: "else", Target: "f1", TargetPort: "in"},
+					{ID: "e5", Source: "blk", SourcePort: "next", Target: "after", TargetPort: "in"},
+				},
+			}
+			ast, verr := program.ValidateForRun(g)
+			if verr != nil {
+				t.Fatalf("compare op %q failed: %v", cmp, verr)
+			}
+			if len(ast.Statements) != 2 {
+				t.Errorf("compare op %q: len(Statements) = %d, want 2 (if_else + code_block.next)", cmp, len(ast.Statements))
+			}
+		}
+	})
+}

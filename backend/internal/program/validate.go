@@ -91,6 +91,17 @@ func ValidateForRun(g Graph) (ValidatedAST, *ValidationError) {
 	}
 
 	if len(g.Nodes) == 0 {
+		if len(g.Edges) > 0 {
+			edgeIssues := make([]ValidationIssue, 0, len(g.Edges))
+			for _, e := range g.Edges {
+				edgeIssues = append(edgeIssues, ValidationIssue{
+					BlockID: e.Source,
+					Code:    "invalid_edge",
+					Message: fmt.Sprintf("edge %q references unknown blocks in an empty program", e.ID),
+				})
+			}
+			return ValidatedAST{}, &ValidationError{Issues: edgeIssues}
+		}
 		return ValidatedAST{}, nil
 	}
 
@@ -142,32 +153,43 @@ func validateStructure(g Graph) []ValidationIssue {
 	return issues
 }
 
+const maxExpandedExprNodes = 1000
+
 type portKey struct {
 	nodeID string
 	port   string
 }
 
+type indexedEdge struct {
+	idx  int
+	edge Edge
+}
+
 type validator struct {
-	graph   Graph
-	nodes   map[string]Node
-	out     map[portKey][]Edge
-	in      map[portKey][]Edge
-	visited map[string]bool
-	issues  []ValidationIssue
+	graph      Graph
+	nodes      map[string]Node
+	out        map[portKey][]indexedEdge
+	in         map[portKey][]indexedEdge
+	visited    map[string]bool
+	usedEdges  map[int]bool
+	exprOps    int
+	exprCapped bool
+	issues     []ValidationIssue
 }
 
 func newValidator(g Graph) *validator {
 	v := &validator{
-		graph:   g,
-		nodes:   make(map[string]Node, len(g.Nodes)),
-		out:     make(map[portKey][]Edge),
-		in:      make(map[portKey][]Edge),
-		visited: make(map[string]bool, len(g.Nodes)),
+		graph:     g,
+		nodes:     make(map[string]Node, len(g.Nodes)),
+		out:       make(map[portKey][]indexedEdge),
+		in:        make(map[portKey][]indexedEdge),
+		visited:   make(map[string]bool, len(g.Nodes)),
+		usedEdges: make(map[int]bool, len(g.Edges)),
 	}
 	for _, n := range g.Nodes {
 		v.nodes[n.ID] = n
 	}
-	for _, e := range g.Edges {
+	for i, e := range g.Edges {
 		if _, ok := v.nodes[e.Source]; !ok {
 			v.addIssue(e.Source, "invalid_edge", fmt.Sprintf("edge %q references unknown source block %q", e.ID, e.Source))
 			continue
@@ -180,8 +202,9 @@ func newValidator(g Graph) *validator {
 			v.addIssue(e.Source, "invalid_edge", fmt.Sprintf("edge %q must specify source_port and target_port", e.ID))
 			continue
 		}
-		v.out[portKey{nodeID: e.Source, port: e.SourcePort}] = append(v.out[portKey{nodeID: e.Source, port: e.SourcePort}], e)
-		v.in[portKey{nodeID: e.Target, port: e.TargetPort}] = append(v.in[portKey{nodeID: e.Target, port: e.TargetPort}], e)
+		ie := indexedEdge{idx: i, edge: e}
+		v.out[portKey{nodeID: e.Source, port: e.SourcePort}] = append(v.out[portKey{nodeID: e.Source, port: e.SourcePort}], ie)
+		v.in[portKey{nodeID: e.Target, port: e.TargetPort}] = append(v.in[portKey{nodeID: e.Target, port: e.TargetPort}], ie)
 	}
 	return v
 }
@@ -233,6 +256,17 @@ func (v *validator) validate() ValidatedAST {
 		}
 	}
 
+	// Never silently drop edges: any edge whose endpoints were visited yet was not consumed
+	// by a valid port traversal represents an invalid or misspelled port connection.
+	for i, e := range v.graph.Edges {
+		if v.usedEdges[i] {
+			continue
+		}
+		if v.visited[e.Source] && v.visited[e.Target] {
+			v.addIssue(e.Source, "invalid_connection", fmt.Sprintf("edge %q (%s.%s -> %s.%s) uses an invalid or unused port", e.ID, e.Source, e.SourcePort, e.Target, e.TargetPort))
+		}
+	}
+
 	return ValidatedAST{Statements: stmts}
 }
 
@@ -241,15 +275,18 @@ func (v *validator) singleTarget(nodeID, port string) (string, bool) {
 	if len(edges) == 0 {
 		return "", false
 	}
+	for _, ie := range edges {
+		v.usedEdges[ie.idx] = true
+	}
 	if len(edges) > 1 {
 		v.addIssue(nodeID, "ambiguous_connection", fmt.Sprintf("port %q has multiple outgoing connections", port))
 		return "", false
 	}
-	if edges[0].TargetPort != "in" {
+	if edges[0].edge.TargetPort != "in" {
 		v.addIssue(nodeID, "invalid_connection", fmt.Sprintf("statement port %q must connect to target port \"in\"", port))
 		return "", false
 	}
-	return edges[0].Target, true
+	return edges[0].edge.Target, true
 }
 
 func (v *validator) walkChain(startID string, stmtStack, visitedStmts map[string]bool) []Stmt {
@@ -366,12 +403,15 @@ func (v *validator) walkChain(startID string, stmtStack, visitedStmts map[string
 
 func (v *validator) resolveInput(targetID, port string, inline *float64, exprStack map[string]bool) Expr {
 	edges := v.in[portKey{nodeID: targetID, port: port}]
+	for _, ie := range edges {
+		v.usedEdges[ie.idx] = true
+	}
 	if len(edges) > 1 {
 		v.addIssue(targetID, "ambiguous_connection", fmt.Sprintf("input port %q has multiple incoming connections", port))
 		return nil
 	}
 	if len(edges) == 1 {
-		edge := edges[0]
+		edge := edges[0].edge
 		if edge.SourcePort != "value" {
 			v.addIssue(targetID, "invalid_connection", fmt.Sprintf("input port %q must connect from source port \"value\"", port))
 			return nil
@@ -392,6 +432,14 @@ func (v *validator) resolveInput(targetID, port string, inline *float64, exprSta
 func (v *validator) resolveExprNode(nodeID string, exprStack map[string]bool) Expr {
 	if exprStack[nodeID] {
 		v.addIssue(nodeID, "cycle_detected", "expression connection contains a cycle")
+		return nil
+	}
+	v.exprOps++
+	if v.exprOps > maxExpandedExprNodes {
+		if !v.exprCapped {
+			v.exprCapped = true
+			v.addIssue(nodeID, "expression_too_complex", fmt.Sprintf("expression expansion exceeds maximum complexity limit (%d)", maxExpandedExprNodes))
+		}
 		return nil
 	}
 	node := v.nodes[nodeID]
