@@ -1,13 +1,15 @@
 version: 1
 project:
   root: .
-  # No package.json or go.mod detected yet; ratified stack lives in 02-DOCS/wiki/sdd/constitution.md.
-  # Re-run sdd-init once frontend/ and backend/ manifests and test runners exist.
-  stacks: []
-  package_managers: []
+  stacks:
+    - go
+  package_managers:
+    - go
   monorepo: false
   signals:
-    - no-manifests-yet
+    - backend/go.mod:go1.24.3
+    - backend/scripts/verify.sh
+    - docker-compose.yml:dgraph
     - constitution-ratified:v1.0.0
 sdd:
   artifact_store: 02-DOCS/wiki/sdd
@@ -19,12 +21,14 @@ sdd:
   delivery_strategy:
     default: ask-on-risk
 testing:
-  # No test runner detected yet; gap recorded until frontend/ and backend/ are scaffolded.
-  strict_tdd: false
-  runners: []
+  strict_tdd: true
+  runners:
+    - go-test
   commands:
-    apply: []
-    verify: []
+    apply:
+      - cd backend && go test -race -cover ./...
+    verify:
+      - cd backend && ./scripts/verify.sh
 phase_rules:
   proposal: optional-on-ambiguity
   specify: requires intent or proposal
