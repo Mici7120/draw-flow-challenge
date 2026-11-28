@@ -47,3 +47,11 @@
 | Record | Path | Summary |
 |--------|------|---------|
 | Program model, persistence & sandboxed execution (2026-11-28) | `02-DOCS/wiki/sdd/verifications/program-model-and-execution-2026-11-28.md` | Closing verification record (`PASS`, all 6 core packages 83.4%–97.0%, AC-1..AC-13 proven) |
+| Program model, persistence & sandboxed execution (2026-11-28 r2) | `02-DOCS/wiki/sdd/verifications/program-model-and-execution-2026-11-28-r2.md` | Post-closing-review fresh verification receipt (`PASS` at `335451c`) |
+
+### Reviews & Archive (`sdd/reviews/`, `sdd/archive/`)
+
+| Artifact | Path | Summary |
+|----------|------|---------|
+| Closing review — Sub-spec 1 | `02-DOCS/wiki/sdd/reviews/program-model-and-execution.md` | Whole-branch closing review (`APPROVE` after F-01 fix) |
+| Archive final report — Sub-spec 1 | `02-DOCS/wiki/sdd/archive/program-model-and-execution/final-report.md` | Ship summary, artifact links, and PR landing decision |

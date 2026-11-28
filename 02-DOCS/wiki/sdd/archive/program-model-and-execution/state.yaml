@@ -1,0 +1,13 @@
+slug: program-model-and-execution
+state: pr-open-awaiting-human-review
+branch: feat/program-model-and-execution
+base_dependency: PR #5 (chore/sdd-init)
+risk_tier: 1
+always_human_paths:
+  - backend/internal/sandbox/harness.py
+  - backend/internal/sandbox/runner.go
+  - backend/internal/store/dgraph.go
+  - .rsc.json
+verification_record: 02-DOCS/wiki/sdd/verifications/program-model-and-execution-2026-11-28-r2.md
+closing_review: 02-DOCS/wiki/sdd/reviews/program-model-and-execution.md
+date: 2026-11-28

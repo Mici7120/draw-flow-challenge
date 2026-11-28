@@ -65,3 +65,15 @@
 - **decision:** Option 1 — clean layered packages, normalized `Graph` contract, `200 OK` `RunResult` for post-start execution outcomes (`runtime_error`, `timeout`, `resource_limit`) and `422` `{ error }` for pre-execution validation or `sandbox_policy_violation`, plus a dedicated fd-3 pipe for final variables.
 - **why:** Satisfies `spec §What result they get` (always returning generated Python and partial output on runtime/timeout failures), prevents user `print()` output from spoofing variable capture, decouples backend AST validation from frontend DrawFlow layout details, and allows parallel implementation and ≥ 80% unit coverage per package.
 - **supersedes:** none
+
+---
+
+## D-0006 — Land Sub-spec 1 via PR awaiting human review (no self-merge)
+- **date:** 2026-11-28
+- **context:** `feat/program-model-and-execution` passed closing verification (`r2`, commit `335451c`) and closing review (`APPROVE`), with `rsc risk --base main` classifying the branch as Tier 1. However, the branch touches `REVIEW.md` always-human paths (`backend/internal/sandbox/*`, `backend/internal/store/dgraph.go`, `.rsc.json`), exceeds the 400-line review budget, and stacks on PR #5 (`chore/sdd-init`).
+- **options considered:**
+  1. Open PR against `main` (noting `Depends on: #5`) and leave it open for human review without self-merging.
+  2. Self-merge the PR automatically under autopilot because `rsc risk` is Tier 1.
+- **decision:** Option 1 — open PR and leave open for human review.
+- **why:** Respects `REVIEW.md`'s always-human paths for sandbox/Dgraph/harness changes, respects `config.yaml`'s `ask-on-risk` delivery strategy above the 400-line budget, and gives the human owner final sign-off on the greenfield backend architecture.
+- **supersedes:** none
