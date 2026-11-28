@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -345,6 +346,206 @@ func TestHTTPAPI_HardeningAndErrorPaths(t *testing.T) {
 		recRunBad := doJSON(t, h, http.MethodPost, "/api/v1/programs/run", "{bad")
 		if recRunBad.Code != http.StatusBadRequest {
 			t.Errorf("run draft bad json status = %d, want 400", recRunBad.Code)
+		}
+	})
+}
+
+type failingStore struct {
+	store.MemoryStore
+	err   error
+	panic bool
+}
+
+func (f *failingStore) List(_ context.Context) ([]program.ProgramSummary, error) {
+	if f.panic {
+		panic("secret dgraph internal stack /var/lib/dgraph")
+	}
+	return nil, f.err
+}
+
+type staticRunner struct {
+	outcome sandbox.Outcome
+}
+
+func (s staticRunner) Run(_ context.Context, _ string) sandbox.Outcome { return s.outcome }
+
+func TestHTTPAPI_ReviewRegressions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("AC-5 descending for 5..2 and empty else/if generate pass and succeed", func(t *testing.T) {
+		h := newTestRouter(t, sandbox.Config{Timeout: 2 * time.Second})
+		g := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "cond", Kind: program.KindIfElse, Data: program.NodeData{Operator: "==", Left: f64(1), Right: f64(2)}},
+				{ID: "loop", Kind: program.KindFor, Data: program.NodeData{Name: "i", From: f64(5), To: f64(2)}},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "cond", TargetPort: "in"},
+				{ID: "e2", Source: "cond", SourcePort: "next", Target: "loop", TargetPort: "in"},
+			},
+		}
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": g})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		var res service.RunResult
+		_ = json.NewDecoder(rec.Body).Decode(&res)
+		if res.Status != "succeeded" || !strings.Contains(res.PythonCode, "pass") {
+			t.Fatalf("AC-5 RunResult = %+v", res)
+		}
+	})
+
+	t.Run("AC-6 & AC-8 decoded empty list, DESC ordering, PUT/GET payloads, and 422 block_id details", func(t *testing.T) {
+		h := newTestRouter(t, sandbox.Config{Timeout: 2 * time.Second})
+
+		recEmpty := doJSON(t, h, http.MethodGet, "/api/v1/programs", nil)
+		if recEmpty.Code != http.StatusOK || strings.TrimSpace(recEmpty.Body.String()) != `{"programs":[]}` {
+			t.Fatalf("empty list = %d %s", recEmpty.Code, recEmpty.Body.String())
+		}
+
+		draft := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "m1", Kind: program.KindMath, Data: program.NodeData{Operator: "+", Left: f64(1)}},
+				{ID: "a1", Kind: program.KindAssign, Data: program.NodeData{Name: "x"}},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "a1", TargetPort: "in"},
+				{ID: "e2", Source: "m1", SourcePort: "value", Target: "a1", TargetPort: "value"},
+			},
+		}
+		rec1 := doJSON(t, h, http.MethodPost, "/api/v1/programs", map[string]any{"name": "First", "graph": draft})
+		var p1 program.Program
+		_ = json.NewDecoder(rec1.Body).Decode(&p1)
+
+		rec2 := doJSON(t, h, http.MethodPost, "/api/v1/programs", map[string]any{"name": "Second", "graph": program.Graph{}})
+		var p2 program.Program
+		_ = json.NewDecoder(rec2.Body).Decode(&p2)
+
+		// Verify 422 error envelope details contain block_id "m1".
+		rec422 := doJSON(t, h, http.MethodPost, "/api/v1/programs/"+p1.ID+"/run", nil)
+		if rec422.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("422 status = %d", rec422.Code)
+		}
+		var errEnv struct {
+			Error struct {
+				Code    string                    `json:"code"`
+				Message string                    `json:"message"`
+				Details []program.ValidationIssue `json:"details"`
+			} `json:"error"`
+		}
+		_ = json.NewDecoder(rec422.Body).Decode(&errEnv)
+		foundM1 := false
+		for _, d := range errEnv.Error.Details {
+			if d.BlockID == "m1" {
+				foundM1 = true
+			}
+		}
+		if errEnv.Error.Code != "validation_error" || !foundM1 {
+			t.Fatalf("422 envelope = %+v, want validation_error with block_id m1", errEnv)
+		}
+
+		// Update p1 so it becomes newer than p2 and moves to index 0 of DESC list.
+		recPut := doJSON(t, h, http.MethodPut, "/api/v1/programs/"+p1.ID, map[string]any{"name": "First Updated", "graph": program.Graph{}})
+		var p1Upd program.Program
+		_ = json.NewDecoder(recPut.Body).Decode(&p1Upd)
+		if p1Upd.ID != p1.ID || p1Upd.Name != "First Updated" || !p1Upd.UpdatedAt.After(p1.UpdatedAt) {
+			t.Fatalf("PUT payload mismatch: before=%+v after=%+v", p1, p1Upd)
+		}
+
+		recGet := doJSON(t, h, http.MethodGet, "/api/v1/programs/"+p1.ID, nil)
+		var p1Got program.Program
+		_ = json.NewDecoder(recGet.Body).Decode(&p1Got)
+		if p1Got.ID != p1.ID || p1Got.Name != "First Updated" {
+			t.Fatalf("GET payload mismatch: %+v", p1Got)
+		}
+
+		recList := doJSON(t, h, http.MethodGet, "/api/v1/programs", nil)
+		var listBody struct {
+			Programs []program.ProgramSummary `json:"programs"`
+		}
+		_ = json.NewDecoder(recList.Body).Decode(&listBody)
+		if len(listBody.Programs) != 2 || listBody.Programs[0].ID != p1.ID || listBody.Programs[1].ID != p2.ID {
+			t.Fatalf("LIST DESC order = %+v, want [%s, %s]", listBody.Programs, p1.ID, p2.ID)
+		}
+	})
+
+	t.Run("AC-11 timeout & AC-13 output truncation end-to-end over HTTP", func(t *testing.T) {
+		hTimeout := newTestRouter(t, sandbox.Config{Timeout: 300 * time.Millisecond})
+
+		// Timeout loop
+		timeoutGraph := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "loop", Kind: program.KindFor, Data: program.NodeData{Name: "i", From: f64(1), To: f64(100000000)}},
+				{ID: "a1", Kind: program.KindAssign, Data: program.NodeData{Name: "x", Value: f64(1)}},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "loop", TargetPort: "in"},
+				{ID: "e2", Source: "loop", SourcePort: "body", Target: "a1", TargetPort: "in"},
+			},
+		}
+		recT := doJSON(t, hTimeout, http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": timeoutGraph})
+		if recT.Code != http.StatusOK {
+			t.Fatalf("timeout status = %d", recT.Code)
+		}
+		var resT service.RunResult
+		_ = json.NewDecoder(recT.Body).Decode(&resT)
+		if resT.Status != sandbox.StatusTimeout || resT.Error == nil || resT.Error.Code != "execution_timeout" {
+			t.Fatalf("timeout RunResult = %+v", resT)
+		}
+
+		// Truncated output loop (uses normal 2s timeout with 20-line cap)
+		hTrunc := newTestRouter(t, sandbox.Config{Timeout: 2 * time.Second, MaxOutputLines: 20, MaxOutputBytes: 4096})
+		truncGraph := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "loop", Kind: program.KindFor, Data: program.NodeData{Name: "i", From: f64(1), To: f64(50)}},
+				{ID: "vi", Kind: program.KindVariable, Data: program.NodeData{Name: "i"}},
+				{ID: "out", Kind: program.KindOutput},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "loop", TargetPort: "in"},
+				{ID: "e2", Source: "loop", SourcePort: "body", Target: "out", TargetPort: "in"},
+				{ID: "e3", Source: "vi", SourcePort: "value", Target: "out", TargetPort: "value"},
+			},
+		}
+		recTr := doJSON(t, hTrunc, http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": truncGraph})
+		var resTr service.RunResult
+		_ = json.NewDecoder(recTr.Body).Decode(&resTr)
+		if resTr.Status != sandbox.StatusSucceeded || !resTr.OutputTruncated || resTr.TruncationNotice == "" {
+			t.Fatalf("truncated RunResult = %+v", resTr)
+		}
+	})
+
+	t.Run("sanitized 500 internal error, panic recovery, and 422 sandbox_policy_violation", func(t *testing.T) {
+		silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+		// 500 internal error hides raw Dgraph/host message.
+		errSvc := service.NewProgramService(&failingStore{err: fmt.Errorf("dgraph dial /var/run/dgraph.sock refused")}, staticRunner{}, nil)
+		rec500 := doJSON(t, httpapi.NewRouter(errSvc, silentLogger), http.MethodGet, "/api/v1/programs", nil)
+		if rec500.Code != http.StatusInternalServerError || strings.Contains(rec500.Body.String(), "dgraph") || !strings.Contains(rec500.Body.String(), `"code":"internal_error"`) {
+			t.Errorf("500 response = %d %s", rec500.Code, rec500.Body.String())
+		}
+
+		// Panic recovery returns sanitized 500 JSON envelope.
+		panicSvc := service.NewProgramService(&failingStore{panic: true}, staticRunner{}, nil)
+		recPanic := doJSON(t, httpapi.NewRouter(panicSvc, silentLogger), http.MethodGet, "/api/v1/programs", nil)
+		if recPanic.Code != http.StatusInternalServerError || strings.Contains(recPanic.Body.String(), "/var/lib/dgraph") || !strings.Contains(recPanic.Body.String(), `"code":"internal_error"`) {
+			t.Errorf("panic response = %d %s", recPanic.Code, recPanic.Body.String())
+		}
+
+		// 422 sandbox_policy_violation mapping.
+		polSvc := service.NewProgramService(store.NewMemoryStore(), staticRunner{
+			outcome: sandbox.Outcome{
+				Status: sandbox.StatusPolicyViolation,
+				Error:  &sandbox.ErrorDetail{Code: "sandbox_policy_violation", Message: "blocked"},
+			},
+		}, nil)
+		recPol := doJSON(t, httpapi.NewRouter(polSvc, silentLogger), http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": program.Graph{}})
+		if recPol.Code != http.StatusUnprocessableEntity || !strings.Contains(recPol.Body.String(), `"code":"sandbox_policy_violation"`) {
+			t.Errorf("policy violation response = %d %s", recPol.Code, recPol.Body.String())
 		}
 	})
 }

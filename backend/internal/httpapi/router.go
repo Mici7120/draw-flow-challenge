@@ -82,6 +82,9 @@ func (h *handler) recoverJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
 				h.logger.Error("http handler panic recovered", "method", r.Method, "path", r.URL.Path, "panic", rec)
 				writeError(w, http.StatusInternalServerError, "internal_error", "internal server error", nil)
 			}

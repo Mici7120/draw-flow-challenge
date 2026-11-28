@@ -50,12 +50,13 @@ func main() {
 	svc := service.NewProgramService(dgStore, runner, nil)
 	router := httpapi.NewRouter(svc, logger)
 
+	writeTimeout := max(30*time.Second, runTimeout+10*time.Second)
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 
