@@ -113,6 +113,13 @@ func (d *DgraphStore) Update(ctx context.Context, p program.Program) (program.Pr
 	if err != nil {
 		return program.Program{}, err
 	}
+	if existing.UID == "" {
+		return program.Program{}, fmt.Errorf("dgraph update program: stored record missing uid")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, existing.CreatedAt)
+	if err != nil {
+		return program.Program{}, fmt.Errorf("parse stored created_at: %w", err)
+	}
 	graphBytes, err := json.Marshal(p.Graph)
 	if err != nil {
 		return program.Program{}, fmt.Errorf("marshal program graph: %w", err)
@@ -132,10 +139,6 @@ func (d *DgraphStore) Update(ctx context.Context, p program.Program) (program.Pr
 	}
 	if _, err := d.client.Mutate(ctx, &api.Mutation{SetJson: payload, CommitNow: true}); err != nil {
 		return program.Program{}, fmt.Errorf("dgraph update program: %w", err)
-	}
-	createdAt, err := time.Parse(time.RFC3339Nano, existing.CreatedAt)
-	if err != nil {
-		return program.Program{}, fmt.Errorf("parse stored created_at: %w", err)
 	}
 	out := cloneProgram(p)
 	out.ID = existing.ID
@@ -178,7 +181,7 @@ func (d *DgraphStore) Get(ctx context.Context, id string) (program.Program, erro
 	}, nil
 }
 
-// List returns all saved program summaries ordered by UpdatedAt descending.
+// List returns all saved program summaries ordered by exact UpdatedAt descending.
 func (d *DgraphStore) List(ctx context.Context) ([]program.ProgramSummary, error) {
 	resp, err := d.client.QueryWithVars(ctx, queryListPrograms, nil)
 	if err != nil {
@@ -205,6 +208,7 @@ func (d *DgraphStore) List(ctx context.Context) ([]program.ProgramSummary, error
 			UpdatedAt: updatedAt,
 		})
 	}
+	sortSummariesDesc(out)
 	return out, nil
 }
 

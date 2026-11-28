@@ -69,13 +69,17 @@ func (m *MemoryStore) List(_ context.Context) ([]program.ProgramSummary, error) 
 			UpdatedAt: p.UpdatedAt,
 		})
 	}
+	sortSummariesDesc(out)
+	return out, nil
+}
+
+func sortSummariesDesc(out []program.ProgramSummary) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
 			return out[i].ID < out[j].ID
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
-	return out, nil
 }
 
 func cloneProgram(p program.Program) program.Program {

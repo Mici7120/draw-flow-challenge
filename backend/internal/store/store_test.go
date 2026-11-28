@@ -349,3 +349,86 @@ func TestStore_ErrorPathsAndDeepCopyIsolation(t *testing.T) {
 		}
 	})
 }
+
+func TestStore_ReviewRegressions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("DgraphStore.List sorts same-hour records by exact UpdatedAt DESC and handles empty slice", func(t *testing.T) {
+		t.Parallel()
+		t1 := time.Date(2026, 11, 28, 10, 5, 0, 0, time.UTC)
+		t2 := time.Date(2026, 11, 28, 10, 45, 0, 0, time.UTC)
+
+		fc := &fakeDgraphClient{
+			queryFn: func(_ context.Context, _ string, _ map[string]string) (*api.Response, error) {
+				b, _ := json.Marshal(map[string]any{
+					"programs": []map[string]any{
+						{"program.id": "older", "program.name": "Older", "program.created_at": t1.Format(time.RFC3339Nano), "program.updated_at": t1.Format(time.RFC3339Nano)},
+						{"program.id": "newer", "program.name": "Newer", "program.created_at": t2.Format(time.RFC3339Nano), "program.updated_at": t2.Format(time.RFC3339Nano)},
+					},
+				})
+				return &api.Response{Json: b}, nil
+			},
+		}
+		ds := store.NewDgraphStore(fc)
+		list, err := ds.List(t.Context())
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(list) != 2 || list[0].ID != "newer" || list[1].ID != "older" {
+			t.Fatalf("same-hour DESC sort failed: %+v", list)
+		}
+
+		emptyClient := &fakeDgraphClient{
+			queryFn: func(_ context.Context, _ string, _ map[string]string) (*api.Response, error) {
+				return &api.Response{Json: []byte(`{"programs":[]}`)}, nil
+			},
+		}
+		emptyList, err := store.NewDgraphStore(emptyClient).List(t.Context())
+		if err != nil || emptyList == nil || len(emptyList) != 0 {
+			t.Fatalf("empty DgraphStore.List = %#v, err=%v", emptyList, err)
+		}
+	})
+
+	t.Run("DgraphStore.Update rejects missing UID before Mutate", func(t *testing.T) {
+		t.Parallel()
+		mutated := false
+		fc := &fakeDgraphClient{
+			queryFn: func(_ context.Context, _ string, _ map[string]string) (*api.Response, error) {
+				b, _ := json.Marshal(map[string]any{
+					"programs": []map[string]any{{"uid": "", "program.id": "p1", "program.created_at": time.Now().UTC().Format(time.RFC3339Nano)}},
+				})
+				return &api.Response{Json: b}, nil
+			},
+			mutateFn: func(_ context.Context, _ *api.Mutation) (*api.Response, error) {
+				mutated = true
+				return &api.Response{}, nil
+			},
+		}
+		if _, err := store.NewDgraphStore(fc).Update(t.Context(), program.Program{ID: "p1"}); err == nil {
+			t.Fatal("expected error for missing UID")
+		}
+		if mutated {
+			t.Fatal("Mutate was called despite missing UID")
+		}
+	})
+
+	t.Run("MemoryStore concurrent access is race-free", func(t *testing.T) {
+		t.Parallel()
+		st := store.NewMemoryStore()
+		t0 := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		done := make(chan struct{}, 8)
+		for i := 0; i < 8; i++ {
+			id := "p-" + string(rune('a'+i))
+			go func(id string, offset int) {
+				defer func() { done <- struct{}{} }()
+				_, _ = st.Create(t.Context(), program.Program{ID: id, Name: id, CreatedAt: t0, UpdatedAt: t0.Add(time.Duration(offset) * time.Second)})
+				_, _ = st.List(t.Context())
+				_, _ = st.Get(t.Context(), id)
+				_, _ = st.Update(t.Context(), program.Program{ID: id, Name: id + "-v2", UpdatedAt: t0.Add(time.Minute)})
+			}(id, i)
+		}
+		for i := 0; i < 8; i++ {
+			<-done
+		}
+	})
+}
