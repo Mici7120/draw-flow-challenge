@@ -238,3 +238,21 @@ func TestRunner_ByteCapTruncation(t *testing.T) {
 		t.Errorf("len(Output) = %d, want <= 64", len(out.Output))
 	}
 }
+
+func TestRunner_HardenedASTRejectsPrintAndRangeAbuse(t *testing.T) {
+	t.Parallel()
+	r := sandbox.NewRunner(sandbox.Config{})
+
+	bad := []string{
+		"x = print(1)",
+		"print(1, 2)",
+		"x = range(1, 5)",
+		"for i in range(1):\n    pass",
+	}
+	for _, code := range bad {
+		out := r.Run(t.Context(), code)
+		if out.Status != sandbox.StatusPolicyViolation {
+			t.Errorf("code %q: Status = %q, want %q", code, out.Status, sandbox.StatusPolicyViolation)
+		}
+	}
+}

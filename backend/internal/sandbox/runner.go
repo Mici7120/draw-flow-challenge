@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	_ "embed"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -107,8 +107,16 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
+	// Explicit os.Pipe for stdout avoids the os/exec.StdoutPipe + cmd.Wait() close race.
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return internalFailure()
+	}
+	defer func() { _ = outR.Close() }()
+
 	varR, varW, err := os.Pipe()
 	if err != nil {
+		_ = outW.Close()
 		return internalFailure()
 	}
 	defer func() { _ = varR.Close() }()
@@ -120,30 +128,41 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 	cmd.Dir = tmpDir
 	cmd.Env = []string{}
 	cmd.Stdin = strings.NewReader(pythonCode)
+	cmd.Stdout = outW
+	cmd.Stderr = io.Discard
 	cmd.ExtraFiles = []*os.File{varW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = varW.Close()
-		return internalFailure()
-	}
-	cmd.Stderr = io.Discard
-
 	if err := cmd.Start(); err != nil {
+		_ = outW.Close()
 		_ = varW.Close()
 		return internalFailure()
 	}
+	// Close parent copies of write ends so readers observe EOF cleanly when child exits.
+	_ = outW.Close()
 	_ = varW.Close()
 
-	// Kill the entire process group immediately if the context expires or cancels.
+	pid := cmd.Process.Pid
+	var (
+		reaped          atomic.Bool
+		killMu          sync.Mutex
+		killedByTimeout atomic.Bool
+		killerWG        sync.WaitGroup
+	)
 	done := make(chan struct{})
+	killerWG.Add(1)
 	go func() {
+		defer killerWG.Done()
 		select {
 		case <-runCtx.Done():
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killMu.Lock()
+			if !reaped.Load() {
+				if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+					killedByTimeout.Store(true)
+				}
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
 			}
+			killMu.Unlock()
 		case <-done:
 		}
 	}()
@@ -152,27 +171,27 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 		capturedOut string
 		truncated   bool
 		sideBytes   []byte
-		wg          sync.WaitGroup
+		ioWG        sync.WaitGroup
 	)
-
-	wg.Add(2)
+	ioWG.Add(2)
 	go func() {
-		defer wg.Done()
-		capturedOut, truncated = readBoundedOutput(stdoutPipe, r.cfg.MaxOutputBytes, r.cfg.MaxOutputLines)
+		defer ioWG.Done()
+		capturedOut, truncated = readBoundedOutput(outR, r.cfg.MaxOutputBytes, r.cfg.MaxOutputLines)
 	}()
 	go func() {
-		defer wg.Done()
+		defer ioWG.Done()
 		sideBytes, _ = io.ReadAll(io.LimitReader(varR, maxSideChannelBytes))
 	}()
 
 	waitErr := cmd.Wait()
+	// Mark process reaped under lock before allowing any further SIGKILL, then stop killer goroutine.
+	killMu.Lock()
+	reaped.Store(true)
+	killMu.Unlock()
 	close(done)
-	wg.Wait()
-
-	// Ensure no stray process in the group survives.
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	killerWG.Wait()
+	ioWG.Wait()
+	cancel()
 
 	out := Outcome{
 		Output:          strings.TrimSuffix(capturedOut, "\n"),
@@ -183,7 +202,7 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 		out.TruncationNotice = fmt.Sprintf("output truncated: exceeded limit (%d bytes or %d lines)", r.cfg.MaxOutputBytes, r.cfg.MaxOutputLines)
 	}
 
-	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+	if killedByTimeout.Load() {
 		out.Status = StatusTimeout
 		out.Error = &ErrorDetail{
 			Code:    "execution_timeout",
@@ -191,7 +210,7 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 		}
 		return out
 	}
-	if runCtx.Err() != nil {
+	if ctx.Err() != nil {
 		out.Status = StatusRuntimeError
 		out.Error = &ErrorDetail{
 			Code:    "execution_cancelled",
@@ -224,26 +243,35 @@ func (r *Runner) Run(ctx context.Context, pythonCode string) Outcome {
 	return internalFailure()
 }
 
+// readBoundedOutput reads fixed-size chunks up to maxBytes or maxLines, then drains via io.Discard
+// without allocating additional memory in the Go host process.
 func readBoundedOutput(r io.Reader, maxBytes, maxLines int) (string, bool) {
-	reader := bufio.NewReader(r)
 	var buf bytes.Buffer
+	chunk := make([]byte, 4096)
 	lines := 0
 	truncated := false
 
 	for {
-		chunk, err := reader.ReadBytes('\n')
-		if len(chunk) > 0 && !truncated {
-			if lines >= maxLines {
-				truncated = true
-			} else if buf.Len()+len(chunk) > maxBytes {
-				remaining := maxBytes - buf.Len()
-				if remaining > 0 {
-					buf.Write(chunk[:remaining])
+		n, err := r.Read(chunk)
+		if n > 0 {
+			for i := 0; i < n; i++ {
+				b := chunk[i]
+				if buf.Len() >= maxBytes {
+					truncated = true
+					break
 				}
-				truncated = true
-			} else {
-				buf.Write(chunk)
-				lines++
+				if lines >= maxLines {
+					truncated = true
+					break
+				}
+				buf.WriteByte(b)
+				if b == '\n' {
+					lines++
+				}
+			}
+			if truncated {
+				_, _ = io.Copy(io.Discard, r)
+				break
 			}
 		}
 		if err != nil {

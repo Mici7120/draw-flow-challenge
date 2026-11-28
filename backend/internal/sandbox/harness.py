@@ -45,31 +45,63 @@ BLOCKED_NAMES = {
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def apply_limits(mem_mb):
+    """Apply zero-file-write and memory caps fail-closed before reading or parsing untrusted input."""
+    resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
+    mem_bytes = mem_mb * 1024 * 1024
+    applied_any_mem = False
+    for limit_kind in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+        try:
+            soft, hard = resource.getrlimit(limit_kind)
+            target = mem_bytes
+            if hard != resource.RLIM_INFINITY and target > hard:
+                target = hard
+            resource.setrlimit(limit_kind, (target, target))
+            applied_any_mem = True
+        except (ValueError, OSError):
+            continue
+    return applied_any_mem
+
+
 def check_ast(source):
     try:
         tree = ast.parse(source, mode="exec")
     except SyntaxError:
         return False
 
+    allowed_print_calls = set()
+    allowed_range_calls = set()
     call_funcs = set()
+
     for node in ast.walk(tree):
         if not isinstance(node, ALLOWED_AST_NODES):
             return False
-        if isinstance(node, ast.Call):
-            if not isinstance(node.func, ast.Name):
+        if isinstance(node, ast.Expr):
+            if (
+                not isinstance(node.value, ast.Call)
+                or not isinstance(node.value.func, ast.Name)
+                or node.value.func.id != "print"
+                or len(node.value.args) != 1
+                or node.value.keywords
+            ):
                 return False
-            if node.func.id not in ("print", "range"):
-                return False
-            if node.keywords:
-                return False
-            call_funcs.add(id(node.func))
-        elif isinstance(node, ast.Assign):
-            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-                return False
+            allowed_print_calls.add(id(node.value))
+            call_funcs.add(id(node.value.func))
         elif isinstance(node, ast.For):
             if not isinstance(node.target, ast.Name) or node.orelse:
                 return False
-            if not isinstance(node.iter, ast.Call) or not isinstance(node.iter.func, ast.Name) or node.iter.func.id != "range":
+            if (
+                not isinstance(node.iter, ast.Call)
+                or not isinstance(node.iter.func, ast.Name)
+                or node.iter.func.id != "range"
+                or len(node.iter.args) != 2
+                or node.iter.keywords
+            ):
+                return False
+            allowed_range_calls.add(id(node.iter))
+            call_funcs.add(id(node.iter.func))
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
                 return False
         elif isinstance(node, ast.Compare):
             if len(node.ops) != 1 or len(node.comparators) != 1:
@@ -79,7 +111,10 @@ def check_ast(source):
                 return False
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
+        if isinstance(node, ast.Call):
+            if id(node) not in allowed_print_calls and id(node) not in allowed_range_calls:
+                return False
+        elif isinstance(node, ast.Name):
             if id(node) in call_funcs:
                 continue
             if node.id.startswith("_") or node.id in BLOCKED_NAMES or node.id in ("print", "range"):
@@ -96,8 +131,29 @@ def main():
         result_pipe.write(json.dumps(payload))
         result_pipe.flush()
 
-    source = sys.stdin.read()
-    tree = check_ast(source)
+    # Apply resource limits BEFORE reading stdin, parsing AST, or compiling untrusted input.
+    if not apply_limits(mem_mb):
+        emit({
+            "status": "resource_limit",
+            "variables": {},
+            "error": {
+                "code": "sandbox_limit_unavailable",
+                "message": "sandbox could not enforce required memory limits",
+            },
+        })
+        return
+
+    try:
+        source = sys.stdin.read()
+        tree = check_ast(source)
+    except MemoryError:
+        emit({
+            "status": "resource_limit",
+            "variables": {},
+            "error": {"code": "resource_limit_exceeded", "message": "program exceeded the memory limit"},
+        })
+        return
+
     if tree is False:
         emit({
             "status": "policy_violation",
@@ -109,13 +165,21 @@ def main():
         })
         return
 
-    compiled = compile(tree, "<program>", "exec")
+    try:
+        compiled = compile(tree, "<program>", "exec")
+    except MemoryError:
+        emit({
+            "status": "resource_limit",
+            "variables": {},
+            "error": {"code": "resource_limit_exceeded", "message": "program exceeded the memory limit"},
+        })
+        return
 
     _real_print = print
     _real_range = range
 
-    def _safe_print(*args):
-        _real_print(*args, flush=True)
+    def _safe_print(arg):
+        _real_print(arg, flush=True)
 
     def _safe_range(start, stop):
         if isinstance(start, bool) or not isinstance(start, int):
@@ -123,18 +187,6 @@ def main():
         if isinstance(stop, bool) or not isinstance(stop, int):
             raise TypeError("for loop bounds must evaluate to integers")
         return _real_range(start, stop)
-
-    # Enforce zero filesystem writes and memory ceiling before executing user code.
-    resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
-    mem_bytes = mem_mb * 1024 * 1024
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-    except (ValueError, OSError):
-        pass
-    try:
-        resource.setrlimit(resource.RLIMIT_DATA, (mem_bytes, mem_bytes))
-    except (ValueError, OSError):
-        pass
 
     safe_globals = {
         "__builtins__": {
