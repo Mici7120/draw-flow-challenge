@@ -117,7 +117,7 @@ def check_ast(source):
         elif isinstance(node, ast.Name):
             if id(node) in call_funcs:
                 continue
-            if node.id.startswith("_") or node.id in BLOCKED_NAMES or node.id in ("print", "range"):
+            if node.id.startswith("__") or node.id in BLOCKED_NAMES or node.id in ("print", "range"):
                 return False
 
     return tree

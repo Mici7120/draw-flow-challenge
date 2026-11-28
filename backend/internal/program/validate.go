@@ -54,6 +54,7 @@ var (
 		"getattr": true, "setattr": true, "delattr": true, "globals": true, "locals": true,
 		"vars": true, "dir": true, "type": true, "object": true, "print": true,
 		"range": true, "int": true, "float": true, "bool": true, "exit": true, "quit": true,
+		"builtins": true,
 	}
 )
 

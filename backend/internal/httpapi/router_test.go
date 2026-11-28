@@ -549,3 +549,53 @@ func TestHTTPAPI_ReviewRegressions(t *testing.T) {
 		}
 	})
 }
+
+func TestHTTPAPI_ClosingReviewParity(t *testing.T) {
+	t.Parallel()
+	h := newTestRouter(t, sandbox.Config{Timeout: 2 * time.Second})
+
+	t.Run("single-underscore variable _x passes validation and runs end-to-end", func(t *testing.T) {
+		g := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "a1", Kind: program.KindAssign, Data: program.NodeData{Name: "_x", Value: f64(42)}},
+				{ID: "vx", Kind: program.KindVariable, Data: program.NodeData{Name: "_x"}},
+				{ID: "o1", Kind: program.KindOutput},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "a1", TargetPort: "in"},
+				{ID: "e2", Source: "a1", SourcePort: "next", Target: "o1", TargetPort: "in"},
+				{ID: "e3", Source: "vx", SourcePort: "value", Target: "o1", TargetPort: "value"},
+			},
+		}
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": g})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+		var res service.RunResult
+		_ = json.NewDecoder(rec.Body).Decode(&res)
+		if res.Status != sandbox.StatusSucceeded || res.Output != "42" || res.Variables["_x"] != 42 {
+			t.Fatalf("unexpected RunResult for _x: %+v", res)
+		}
+	})
+
+	t.Run("reserved name builtins fails validation with block_id before sandbox execution", func(t *testing.T) {
+		g := program.Graph{
+			Nodes: []program.Node{
+				{ID: "s", Kind: program.KindStart},
+				{ID: "bad_asg", Kind: program.KindAssign, Data: program.NodeData{Name: "builtins", Value: f64(1)}},
+			},
+			Edges: []program.Edge{
+				{ID: "e1", Source: "s", SourcePort: "next", Target: "bad_asg", TargetPort: "in"},
+			},
+		}
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/programs/run", map[string]any{"graph": g})
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `"code":"validation_error"`) || !strings.Contains(body, `"block_id":"bad_asg"`) {
+			t.Errorf("expected validation_error with block_id bad_asg, got %s", body)
+		}
+	})
+}
