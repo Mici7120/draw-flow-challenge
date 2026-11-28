@@ -41,3 +41,9 @@
 | Ledger | Path | Summary |
 |--------|------|---------|
 | Program model, persistence & sandboxed execution | `02-DOCS/wiki/sdd/progress/program-model-and-execution.md` | Append-only per-task TDD/review ledger and decision queue for Sub-spec 1 |
+
+### Verifications (`sdd/verifications/`)
+
+| Record | Path | Summary |
+|--------|------|---------|
+| Program model, persistence & sandboxed execution (2026-11-28) | `02-DOCS/wiki/sdd/verifications/program-model-and-execution-2026-11-28.md` | Closing verification record (`PASS`, all 6 core packages 83.4%–97.0%, AC-1..AC-13 proven) |
